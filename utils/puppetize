@@ -50,7 +50,9 @@ def main():
         'url',
     ]
 
-    # Scrap page for boxes
+    matches = []
+
+    # Scrape Puppet Labs page for boxes
     box_regex = re.compile(
         "<td>([a-zA-Z ]+)</td>\n\s*<td>([a-zA-Z0-9\.\-]+)"
         "</td>\n\s*<td>([a-zA-Z0-9\-\.]+)</td>\n\s*<td>"
@@ -61,33 +63,106 @@ def main():
 
     contents = urllib.urlopen(base_url).read()
     boxes = re.findall(box_regex, contents)
-    matches = []
+    puppet_matches = []
     for match in boxes:
-        matches.append(
+        puppet_matches.append(
             {
                 'name': ' '.join(match[0:2]),
                 'os': match[0],
                 'version': match[1],
                 'arch': match[2],
-                'guest': match[3],
+                'provider': match[3],
                 'url': base_url + "/%s" % match[4],
             }
         )
-        matches.append(
+        puppet_matches.append(
             {
                 'name': ' '.join(match[0:2]) + " - nocm",
                 'os': match[0],
                 'version': match[1],
                 'arch': match[2],
-                'guest': match[3],
+                'provider': match[3],
                 'url': base_url + "/%s" % match[5],
             }
         )
 
-    matches = filter_list(matches, guest='virtualbox')
+    #matches += puppet_matches
 
-    name = " ".join(sys.argv[1:])
-    matches = filter_list(matches, name=name)
+    # Scrape http://vagrantbox.es/ vagrant boxes
+
+    box_regex = re.compile(
+        "<tr>\n\s*<td>(.*)</td>\n\s*"
+        "<td>(.*)</td>\n\s*"
+        "<td>(.*)</td>\n\s*"
+        "<td>(.*)</td>\n\s*"
+        "</tr>"
+    )
+
+    oses = [
+        "Arch",
+        "CentOS",
+        "Debian",
+        "Fedora",
+        "FreeBSD",
+        "Funtoo",
+        "Gentoo",
+        "Heroku",
+        "Windows",
+        "OmniOS",
+        "OpenBSD",
+        "OpenSuse",
+        "Oracle",
+        "SLES",
+        "Scientific",
+        "Slackware",
+        "Solaris",
+        "Ubuntu",
+        "openSUSE",
+    ]
+
+    contents = urllib.urlopen("http://www.vagrantbox.es/").read()
+    boxes = re.findall(box_regex, contents)
+    boxes_matches = []
+    ARCH_64BIT = re.compile(
+        "x?64|x?86_64", re.IGNORECASE
+    )
+    ARCH_32BIT = re.compile(
+        "i?386|32", re.IGNORECASE
+    )
+    for match in boxes:
+        name = match[0]
+        operating_system = None
+        for x in oses:
+            if x in name:
+                operating_system = x
+                break
+        arch = None
+        if re.search(ARCH_64BIT, match[0]):
+            arch = "x64"
+        elif re.search(ARCH_32BIT, match[0]):
+            arch = "i386"
+
+        if all([operating_system, arch]):
+            boxes_matches.append(
+                {
+                    'name': match[0],
+                    'os': operating_system,
+                    'version': None,
+                    'arch': arch,
+                    'provider': match[1],
+                    'url': match[2],
+                }
+            )
+
+    matches += boxes_matches
+    print matches
+
+    # Filter out non-virtualbox providers
+
+    matches = filter_list(matches, provider='virtualbox')
+
+    for name in sys.argv[1:]:
+        matches = filter_list(matches, all=name)
 
     for select_filter in selection:
 
@@ -118,20 +193,29 @@ def main():
         print "Unable to determine box."
         exit(2)
     output = base_vagrant_file % matches[0]
+    print output
+    exit(0)
     f = open('./VagrantFile', 'w')
     f.write(output)
     f.close()
 
     # Start Vagrant Box
-    call(['vagrant', 'up'])
-    call(['vagrant', 'ssh'])
+    #call(['vagrant', 'up'])
+    #call(['vagrant', 'ssh'])
 
 
 def filter_list(l, **kwargs):
     final_list = []
+    if 'all' in kwargs:
+        v = kwargs['all']
+        for item in l:
+            for key in item:
+                if item[key] and re.search(re.compile(v, re.IGNORECASE), item[key]):
+                    final_list.append(item)
+        return final_list
     for k, v in kwargs.items():
         for item in l:
-            if k in item and re.search(re.compile(v, re.IGNORECASE), item[k]):
+            if k in item and item[k] and v.lower() in item[k].lower():
                 final_list.append(item)
     final_list = list({x['url']: x for x in final_list}.values())
     return final_list
